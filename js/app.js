@@ -51,8 +51,16 @@ function barre(titre, retour = accueil, ...actions) {
     ...actions);
 }
 
-/** Champ avec son libellé. */
-const champ = (libelle, controle, aide) => el("label", { class: "champ" }, el("span", {}, libelle), controle, aide ? el("small", {}, aide) : null);
+/**
+ * Champ avec son libellé. Seul un contrôle simple (zone de saisie, liste) est enveloppé dans un <label> :
+ * un <label> qui contient plusieurs boutons renvoie tous les touchers vers le premier (niveaux, « Maintenant », +5…).
+ */
+function champ(libelle, controle, aide) {
+  // Contrôle simple : le libellé peut l'envelopper (toucher le libellé place le curseur dans le champ)
+  const simple = controle instanceof HTMLInputElement || controle instanceof HTMLSelectElement || controle instanceof HTMLTextAreaElement;
+  // Bloc
+  return el(simple ? "label" : "div", { class: "champ" }, el("span", {}, libelle), controle, aide ? el("small", {}, aide) : null);
+}
 
 /** Liste déroulante liée à une propriété d'un objet (valeur vide = null). */
 function choix(objet, propriete, options, apresChangement, vide = "—") {

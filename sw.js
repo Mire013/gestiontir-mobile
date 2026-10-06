@@ -2,7 +2,7 @@
 // Aucune donnée personnelle ne passe par ici : seulement les fichiers de l'application.
 
 // Version du cache (à changer à chaque publication pour que les téléphones se mettent à jour)
-const VERSION = "gt-mobile-1.0.0";
+const VERSION = "gt-mobile-1.0.1";
 
 // Fichiers de l'application
 const FICHIERS = [
