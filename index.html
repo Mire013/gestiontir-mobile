@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="fr" data-version="1.0.0">
+<head>
+  <meta charset="utf-8">
+  <!-- Plein écran sur téléphone, sans zoom du navigateur (la cible gère son propre zoom) -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+  <title>Gestion Tir Mobile</title>
+  <meta name="description" content="Saisie au stand des sessions ISSF et des séances TSV pour Gestion Tir.">
+  <!-- Aucune page ne doit être indexée par les moteurs de recherche -->
+  <meta name="robots" content="noindex, nofollow">
+  <!-- Application installable (PWA) -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#1c1b19">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Gestion Tir">
+  <link rel="icon" href="icones/icone-192.png">
+  <link rel="apple-touch-icon" href="icones/icone-180.png">
+  <link rel="stylesheet" href="css/app.css">
+  <!-- Bibliothèques embarquées : lecture (jsQR, Apache 2.0) et création (qrcode-generator, MIT) de QR codes -->
+  <script src="vendor/jsQR.js" defer></script>
+  <script src="vendor/qrcode.js" defer></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <!-- Écran courant -->
+  <main id="vue"><p class="note">Chargement…</p></main>
+  <!-- Messages temporaires -->
+  <div id="toasts" aria-live="polite"></div>
+  <noscript>Cette application a besoin de JavaScript.</noscript>
+</body>
+</html>

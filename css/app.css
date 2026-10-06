@@ -1,0 +1,155 @@
+/* Gestion Tir Mobile : grandes zones à toucher, lisible au soleil (thème clair) comme à l'intérieur (thème sombre). */
+
+:root {
+  --fond: #f4f1ea;
+  --carte: #ffffff;
+  --texte: #1f1d1a;
+  --texte-2: #6b665d;
+  --bord: #ddd6c8;
+  --accent: #8a6a2b;
+  --accent-texte: #ffffff;
+  --accent-clair: #f1e7d2;
+  --danger: #b3261e;
+  --ok: #2e7d32;
+  --fond-cible: #3a3833;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fond: #1c1b19;
+    --carte: #282623;
+    --texte: #f2efe8;
+    --texte-2: #b4ad9f;
+    --bord: #403c36;
+    --accent: #d2ad66;
+    --accent-texte: #1c1b19;
+    --accent-clair: #3a3226;
+    --danger: #ef8a83;
+    --ok: #7bc47f;
+    --fond-cible: #22211f;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--fond);
+  color: var(--texte);
+  font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 12px calc(24px + env(safe-area-inset-bottom));
+}
+
+/* ---------- Barre de titre ---------- */
+.barre-titre {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 -12px 12px; padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
+  background: var(--fond); border-bottom: 1px solid var(--bord);
+}
+.barre-titre h1 { flex: 1; margin: 0; font-size: 19px; }
+.logo { font-size: 22px; color: var(--accent); }
+
+/* ---------- Boutons ---------- */
+button {
+  min-height: 44px; padding: 8px 14px;
+  border: 1px solid var(--bord); border-radius: 10px;
+  background: var(--carte); color: var(--texte);
+  font: inherit; font-weight: 600; cursor: pointer;
+}
+button:disabled { opacity: 0.45; }
+button.principal { background: var(--accent); border-color: var(--accent); color: var(--accent-texte); }
+button.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
+button.large { width: 100%; min-height: 52px; font-size: 17px; }
+button.icone { min-width: 44px; padding: 6px; font-size: 20px; background: transparent; border: none; }
+
+.actions { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+.barre { display: flex; gap: 10px; justify-content: flex-end; margin-top: 12px; }
+.pied { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.pied button { flex: 1; }
+
+/* ---------- Cartes et champs ---------- */
+.carte {
+  background: var(--carte); border: 1px solid var(--bord); border-radius: 14px;
+  padding: 14px; margin: 12px 0;
+}
+.carte h2 { margin: 0 0 8px; font-size: 17px; }
+.carte.alerte { border-color: var(--accent); background: var(--accent-clair); }
+.carte.centre { text-align: center; }
+fieldset { border: none; padding: 0; margin: 0; min-width: 0; }
+fieldset.carte { border: 1px solid var(--bord); }
+
+.champ { display: block; margin: 10px 0; }
+.champ > span { display: block; font-size: 14px; color: var(--texte-2); margin-bottom: 4px; }
+.champ small { display: block; color: var(--texte-2); margin-top: 4px; }
+input, select, textarea {
+  width: 100%; min-height: 44px; padding: 8px 10px;
+  border: 1px solid var(--bord); border-radius: 10px;
+  background: var(--fond); color: var(--texte); font: inherit;
+}
+textarea { min-height: 70px; }
+.deux { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.heure, .compteur { display: flex; gap: 6px; }
+.heure input, .compteur input { flex: 1; min-width: 0; }
+.heure button, .compteur button { padding: 6px 10px; }
+.case { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.case input { width: 24px; height: 24px; min-height: 0; }
+.niveaux { display: flex; gap: 6px; }
+.niveaux button { flex: 1; font-size: 20px; color: var(--bord); padding: 4px; }
+.niveaux button.actif { color: var(--accent); border-color: var(--accent); }
+details { margin-top: 12px; }
+summary { cursor: pointer; color: var(--accent); min-height: 32px; }
+
+.note, .aide { color: var(--texte-2); font-size: 14px; }
+.progression { font-weight: 600; text-align: center; }
+
+/* ---------- Accueil : liste des saisies ---------- */
+.titre-liste { font-size: 16px; margin: 18px 0 6px; }
+.ligne {
+  display: grid; grid-template-columns: auto 1fr; grid-template-areas: "date statut" "resume resume";
+  width: 100%; text-align: left; gap: 2px 10px; margin: 8px 0; font-weight: 400;
+}
+.ligne .date { grid-area: date; font-weight: 600; }
+.ligne .resume { grid-area: resume; color: var(--texte-2); font-size: 14px; }
+.ligne .statut { grid-area: statut; justify-self: end; }
+.ligne.recue { opacity: 0.6; }
+.statut { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: var(--accent-clair); color: var(--texte); }
+.statut.en-cours { background: #ffe9a8; color: #5a4300; }
+.statut.à-envoyer { background: var(--accent); color: var(--accent-texte); }
+.statut.reçue-par-le-PC { background: transparent; color: var(--ok); border: 1px solid var(--ok); }
+
+/* ---------- Session ISSF ---------- */
+.onglets { display: flex; gap: 6px; margin-bottom: 8px; }
+.onglets button { flex: 1; }
+.onglets button.actif { background: var(--accent-clair); border-color: var(--accent); }
+.score { font-weight: 600; font-size: 15px; margin-bottom: 6px; }
+.barre-carton, .barre-outils { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+.barre-carton .titre-carton { flex: 1; text-align: center; font-weight: 600; }
+.barre-outils button { flex: 1; padding: 6px 4px; font-size: 15px; }
+.barre-outils button.essais { background: #ffe9a8; color: #5a4300; border-color: #c9a100; }
+canvas.cible {
+  --fond-cible: var(--fond-cible);
+  display: block; width: 100%; height: min(62vh, 560px);
+  border-radius: 12px; touch-action: none; user-select: none; -webkit-user-select: none;
+  background: var(--fond-cible);
+}
+.stats { font-size: 13px; color: var(--texte-2); min-height: 18px; }
+
+/* ---------- Caméra et QR codes ---------- */
+video.camera { display: block; width: 100%; max-height: 60vh; border-radius: 12px; background: #000; object-fit: cover; }
+canvas.qr { width: min(92vw, 520px); height: auto; aspect-ratio: 1; image-rendering: pixelated; border-radius: 8px; }
+
+/* ---------- Messages ---------- */
+#toasts { position: fixed; left: 0; right: 0; bottom: calc(16px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 20; pointer-events: none; }
+.toast { max-width: 92vw; padding: 10px 14px; border-radius: 10px; background: #2b2925; color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,.3); pointer-events: auto; }
+.toast.fixe button { margin-left: 8px; min-height: 36px; }
+.modale-fond { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 30; padding: 16px; }
+.modale { background: var(--carte); border-radius: 14px; padding: 16px; max-width: 420px; width: 100%; }

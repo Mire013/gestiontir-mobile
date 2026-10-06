@@ -1,0 +1,17 @@
+{
+  "name": "Gestion Tir Mobile",
+  "short_name": "Gestion Tir",
+  "description": "Saisie au stand des sessions ISSF et des séances TSV pour Gestion Tir.",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1c1b19",
+  "theme_color": "#1c1b19",
+  "icons": [
+    { "src": "icones/icone-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icones/icone-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icones/icone-masquable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
