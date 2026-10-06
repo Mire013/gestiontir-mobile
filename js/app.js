@@ -120,6 +120,26 @@ function disciplineDe(s) {
 /** Munition d'une saisie. */
 const munitionDe = (s) => trouver(L().munitions, s.munition);
 
+/** Fiches douilles où ranger les douilles d'une munition du commerce : celles de son calibre, plus celle déjà choisie. */
+function douillesPour(s) {
+  // Calibre de la munition
+  const calibre = munitionDe(s)?.calibre;
+  // Filtre (listes d'un PC plus ancien : pas de douilles)
+  return (L().douilles ?? []).filter((d) => !calibre || !d.calibre || d.calibre === calibre || d.id === s.douille);
+}
+
+/** Douille proposée d'office : la seule du calibre exact de la munition du commerce, sinon aucune. */
+function douilleParDefaut(s) {
+  // Munition
+  const m = munitionDe(s);
+  // Rechargée ou inconnue : sa recette connaît la douille
+  if (!m || m.rechargee || !m.calibre) return null;
+  // Douilles du même calibre
+  const memes = (L().douilles ?? []).filter((d) => d.calibre === m.calibre);
+  // Seule ou aucune
+  return memes.length === 1 ? memes[0].id : null;
+}
+
 /** Armes proposées : celles du tireur (ou sans tireur), plus l'arme déjà choisie. */
 const armesPour = (s) => L().armes.filter((a) => !s.tireur || !a.tireur || a.tireur === s.tireur || a.id === s.arme);
 
@@ -573,11 +593,13 @@ function nouvelleSeanceTsv() {
     tireur: derniere?.tireur ?? defauts.tireur ?? (L().tireurs.length === 1 ? L().tireurs[0].id : null),
     stand: derniere?.stand ?? defauts.stand ?? (L().stands.length === 1 ? L().stands[0].id : null),
     arme: derniere?.arme ?? null, munition: derniere?.munition ?? null, lot: null,
-    tirs: null, recuperees: null, exercice: null, carnet: false, responsable: derniere?.responsable ?? null, note: null,
+    tirs: null, recuperees: null, douille: null, exercice: null, carnet: false, responsable: derniere?.responsable ?? null, note: null,
     _statut: "encours", _exportee: null, _recue: false
   };
   // Carnet tenu par le tireur
   s.carnet = !!trouver(L().tireurs, s.tireur)?.carnet;
+  // Douille de rangement (munition du commerce) : celle de la dernière séance, sinon la seule du calibre
+  s.douille = derniere?.munition === s.munition && derniere?.douille ? derniere.douille : douilleParDefaut(s);
   // Ajout
   etat.tsv.push(s); sauver();
   ecranSeanceTsv(s.id);
@@ -602,12 +624,18 @@ function ecranSeanceTsv(id) {
       champ("Tireur", choix(s, "tireur", options(L().tireurs), () => { s.carnet = !!trouver(L().tireurs, s.tireur)?.carnet; redessiner(); })),
       champ("Stand", choix(s, "stand", options(L().stands))),
       champ("Arme", choix(s, "arme", options(armesPour(s)), redessiner)),
-      champ("Munition", choix(s, "munition", options(munitionsPour(s)), () => { const mm = munitionDe(s); s.lot = mm?.lots?.length === 1 ? mm.lots[0].id : null; redessiner(); })),
+      champ("Munition", choix(s, "munition", options(munitionsPour(s)), () => { const mm = munitionDe(s); s.lot = mm?.lots?.length === 1 ? mm.lots[0].id : null; s.douille = douilleParDefaut(s); redessiner(); })),
       m?.rechargee ? champ("Lot de douilles", choix(s, "lot", options(m.lots ?? []))) : null,
       champ("Munitions tirées", el("div", { class: "compteur" },
         saisie(s, "tirs", { inputmode: "numeric" }, true),
-        el("button", { type: "button", onclick: () => plus(5) }, "+5"), el("button", { type: "button", onclick: () => plus(10) }, "+10"), el("button", { type: "button", onclick: () => plus(50) }, "+50"))),
-      m?.rechargee ? champ("Douilles récupérées", saisie(s, "recuperees", { inputmode: "numeric", placeholder: "Vide = toutes" }, true)) : null,
+        el("button", { type: "button", onclick: () => plus(1) }, "+1"), el("button", { type: "button", onclick: () => plus(5) }, "+5"),
+        el("button", { type: "button", onclick: () => plus(10) }, "+10"), el("button", { type: "button", onclick: () => plus(50) }, "+50"))),
+      // Munition du commerce : fiche douille où ranger les douilles récupérées
+      m && !m.rechargee ? champ("Ranger les douilles dans", choix(s, "douille", options(douillesPour(s)), redessiner, "Ne pas les garder"),
+        (L().douilles ?? []).length ? null : "Renvoyez les listes depuis le PC pour choisir une douille.") : null,
+      // Nombre de douilles récupérées (vide = toutes), qui rentrent dans le stock de douilles vides
+      m?.rechargee || (m && s.douille) ? champ("Douilles récupérées", saisie(s, "recuperees", { inputmode: "numeric", placeholder: "Vide = toutes" }, true),
+        "Elles rentrent dans le stock de douilles à la validation sur le PC.") : null,
       champ("Exercice", saisie(s, "exercice")),
       caseACocher(s, "carnet", "Inscrire au carnet de tir", redessiner),
       s.carnet ? champ("Responsable (contrôle)", saisie(s, "responsable")) : null,
@@ -615,6 +643,7 @@ function ecranSeanceTsv(id) {
     el("div", { class: "pied" },
       modifiable ? el("button", { class: "principal", onclick: async () => {
         if (!s.arme || !s.munition || !(s.tirs > 0)) { toast("Indiquez l'arme, la munition et le nombre de tirs."); return; }
+        if (s.recuperees > s.tirs) { toast("Les douilles récupérées ne peuvent pas dépasser les munitions tirées."); return; }
         s._statut = "terminee"; await sauver(); toast("Séance terminée : elle partira à la prochaine synchronisation."); accueil();
       } }, "Terminer la séance")
         : !s._exportee ? el("button", { onclick: () => { s._statut = "encours"; sauver(); redessiner(); } }, "Rouvrir pour modifier") : el("p", { class: "note" }, "Envoyée au PC : modifiez-la dans Gestion Tir."),
