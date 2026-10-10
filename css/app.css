@@ -153,3 +153,12 @@ canvas.qr { width: min(92vw, 520px); height: auto; aspect-ratio: 1; image-render
 .toast.fixe button { margin-left: 8px; min-height: 36px; }
 .modale-fond { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 30; padding: 16px; }
 .modale { background: var(--carte); border-radius: 14px; padding: 16px; max-width: 420px; width: 100%; }
+
+/* ---------- Analyse d'une photo de cible ---------- */
+.photo-ecran { position: fixed; inset: 0; z-index: 25; overflow: auto; background: var(--fond); padding: calc(10px + env(safe-area-inset-top)) 12px calc(16px + env(safe-area-inset-bottom)); }
+.photo-entete { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
+.photo-consigne { font-weight: 600; margin: 6px 0; }
+canvas.photo-canvas { display: block; width: 100%; height: auto; border-radius: 10px; touch-action: none; user-select: none; -webkit-user-select: none; background: #000; }
+canvas.photo-loupe { position: fixed; z-index: 40; width: 120px; height: 120px; border: 3px solid var(--accent); border-radius: 50%; background: #000; pointer-events: none; box-shadow: 0 4px 16px rgba(0,0,0,.45); }
+.photo-sensibilite input { min-height: 30px; padding: 0; }
+.photo-sensibilite[hidden] { display: none; }

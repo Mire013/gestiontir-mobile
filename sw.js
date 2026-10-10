@@ -2,12 +2,12 @@
 // Aucune donnée personnelle ne passe par ici : seulement les fichiers de l'application.
 
 // Version du cache (à changer à chaque publication pour que les téléphones se mettent à jour)
-const VERSION = "gt-mobile-1.0.2";
+const VERSION = "gt-mobile-1.1.0";
 
 // Fichiers de l'application
 const FICHIERS = [
   "./", "index.html", "manifest.webmanifest", "css/app.css", "vendor/LICENCES.md",
-  "js/app.js", "js/outils.js", "js/paquets.js", "js/coffre.js", "js/issf.js", "js/cible-vue.js", "js/qr.js",
+  "js/app.js", "js/outils.js", "js/paquets.js", "js/coffre.js", "js/issf.js", "js/cible-vue.js", "js/photo.js", "js/qr.js",
   "vendor/jsQR.js", "vendor/qrcode.js",
   "icones/icone-180.png", "icones/icone-192.png", "icones/icone-512.png", "icones/icone-masquable-512.png"
 ];

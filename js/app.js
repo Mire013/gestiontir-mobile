@@ -6,6 +6,7 @@ import { chiffrerPaquet, dechiffrerPaquet, decouperQr, AssembleurQr, lireJumelag
 import { coffreExiste, creerCoffre, ouvrirCoffre, enregistrer, changerCode, fermerCoffre, effacerCoffre } from "./coffre.js";
 import { coter, scoreCarton, resultat, texteResultat, statistiques, cartonEnCours, matchComplet } from "./issf.js";
 import { VueCible } from "./cible-vue.js";
+import { ouvrirAnalysePhoto } from "./photo.js";
 import { afficherQr, lireQr } from "./qr.js";
 
 // ===================== État =====================
@@ -416,14 +417,14 @@ function ecranSessionIssf(id, onglet = "cible") {
       // Impact posé
       impact: (visuel, x, y) => ajouter(visuel, x, y)
     });
-    // Ajout d'un impact (mêmes règles que sur le PC)
-    const ajouter = (visuel, x, y) => {
+    // Pose d'un impact dans la session (mêmes règles que sur le PC) ; renvoie null si c'est impossible
+    const poser = (visuel, x, y, silencieux = false) => {
       // Saisie possible
-      if (!modifiable) return;
+      if (!modifiable) return null;
       // Carton qui reçoit l'impact
       const carton = modeEssais ? 0 : courant;
       // Match complet
-      if (carton > 0 && s.impacts.filter((i) => i.carton === carton).length >= d.impactsParCarton) { toast("Session complète : terminez-la, ou passez en essais."); return; }
+      if (carton > 0 && s.impacts.filter((i) => i.carton === carton).length >= d.impactsParCarton) return null;
       // Points
       const { valeur, mouche } = coter(d.objetCible, d, x, y, trou);
       // Impact
@@ -432,13 +433,31 @@ function ecranSessionIssf(id, onglet = "cible") {
       // Heure de début au premier impact du match
       if (carton > 0 && !s.heureDebut) s.heureDebut = heureDe();
       // Carton plein : le suivant prend le relais
-      if (carton > 0 && impact.numero >= d.impactsParCarton && courant < d.cartons) { courant++; toast(`Carton ${carton} terminé : carton ${courant}.`); }
+      if (carton > 0 && impact.numero >= d.impactsParCarton && courant < d.cartons) { courant++; if (!silencieux) toast(`Carton ${carton} terminé : carton ${courant}.`); }
       // Carton affiché
       affiche = carton === 0 ? 0 : courant;
+      return impact;
+    };
+    // Ajout d'un impact touché sur la cible
+    const ajouter = (visuel, x, y) => {
+      // Pose
+      const impact = poser(visuel, x, y);
+      // Impossible : match complet
+      if (!impact) { if (modifiable) toast("Session complète : terminez-la, ou passez en essais."); return; }
       // Vibration courte
       navigator.vibrate?.(15);
       // Enregistrement et affichage
       sauver(); rafraichir(impact);
+    };
+    // Ajout des impacts repérés sur une photo (dans le carton en cours, ou en essais)
+    const ajouterLot = (liste) => {
+      // Pose un par un, jusqu'à ce que le match soit complet
+      let n = 0;
+      for (const p of liste) { if (!poser(p.visuel, p.x, p.y, true)) break; n++; }
+      // Enregistrement et affichage
+      sauver(); rafraichir();
+      // Bilan
+      toast(n === liste.length ? `${n} impact(s) ajouté(s).` : `${n} impact(s) ajouté(s) sur ${liste.length} : session complète.`, 4000);
     };
     // Mise à jour de l'affichage
     const rafraichir = (dernier = null) => {
@@ -486,6 +505,7 @@ function ecranSessionIssf(id, onglet = "cible") {
       modifiable ? el("div", { class: "barre-outils" },
         boutonMode,
         el("button", { onclick: annuler }, "Annuler le dernier"),
+        el("button", { onclick: () => ouvrirAnalysePhoto({ cible: d.objetCible, trou, valider: ajouterLot }) }, "📷 Photo"),
         el("button", { onclick: () => vueCible.zoomerCentre(1 / 1.5) }, "−"),
         el("button", { onclick: () => vueCible.zoomerCentre(1.5) }, "+"),
         el("button", { onclick: () => vueCible.ajuster() }, "⤢")) : el("div", { class: "barre-outils" },
