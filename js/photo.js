@@ -43,7 +43,38 @@ function moyenne(ii, l, h, x, y, r) {
   return s / ((x1 - x0) * (y1 - y0));
 }
 
+/**
+ * Densité d'une tache : part des pixels du cœur (disque de 0,35 diamètre de trou) qui s'écartent franchement du fond.
+ * Un trou est plein (densité proche de 1) ; un chiffre ou un trait imprimé ne remplit qu'une fraction du disque.
+ * @param {number} pol -1 : tache plus sombre que le fond ; +1 : plus claire
+ */
+function densite(gris, l, h, cx, cy, D, pol) {
+  // Fond : médiane de quelques pixels sur une couronne autour du trou
+  const fond = [];
+  for (let a = 0; a < 24; a++) for (const f of [0.9, 1.15, 1.4]) {
+    const x = Math.round(cx + Math.cos(a / 24 * 6.2832) * D * f), y = Math.round(cy + Math.sin(a / 24 * 6.2832) * D * f);
+    if (x >= 0 && y >= 0 && x < l && y < h) fond.push(gris[y * l + x]);
+  }
+  if (fond.length < 10) return 0;
+  fond.sort((p, q) => p - q);
+  const bg = fond[fond.length >> 1];
+  // Écarts (dans le sens de la tache) sur le cœur
+  const R = Math.max(2, D * 0.35), ecarts = [];
+  for (let y = Math.round(cy - R); y <= Math.round(cy + R); y++) for (let x = Math.round(cx - R); x <= Math.round(cx + R); x++) {
+    if (x < 0 || y < 0 || x >= l || y >= h || (x - cx) ** 2 + (y - cy) ** 2 > R * R) continue;
+    ecarts.push(pol * (gris[y * l + x] - bg));
+  }
+  if (ecarts.length < 5) return 0;
+  const tries = [...ecarts].sort((p, q) => p - q);
+  // Niveau de référence : 90e centile ; il faut un vrai contraste
+  const q90 = tries[Math.floor(tries.length * 0.9)];
+  if (q90 < 15) return 0;
+  return ecarts.filter((e) => e >= 0.5 * q90).length / ecarts.length;
+}
+
 /** Réglages selon la sensibilité (1 = prudent, 5 = très sensible) : plancher de contraste et facteur de bruit. */
+// Densité minimale du cœur d'une tache pour être un trou (les chiffres imprimés sont bien en dessous)
+const SEUIL_DENSITE = 0.55;
 const REGLAGES = { 1: [40, 7], 2: [30, 6], 3: [22, 5], 4: [16, 4], 5: [11, 3.2] };
 
 /**
@@ -126,8 +157,11 @@ export function detecterDansGris(gris, l, h, zones, trouPx, sensibilite = 3) {
         const plusGrand = Math.max(bw, bh), plusPetit = Math.min(bw, bh);
         if (aire < 0.1 * surfaceTrou || aire > 7 * surfaceTrou) continue;
         if (plusGrand > 3.2 * D || plusGrand / plusPetit > 2.4 || aire / (bw * bh) < 0.4) continue;
+        // Un chiffre ou un trait imprimé ne remplit pas le cœur de la tache : on l'écarte
+        const xc = x0 + sx / sp, yc = y0 + sy / sp, dens = densite(gris, l, h, xc, yc, D, pol);
+        if (dens < SEUIL_DENSITE) continue;
         // Trou trouvé (centre pondéré)
-        trouves.push({ visuel: z.visuel, x: x0 + sx / sp, y: y0 + sy / sp, force: pic / seuil, douteux: plusGrand > 1.9 * D });
+        trouves.push({ visuel: z.visuel, x: xc, y: yc, force: pic / seuil, densite: dens, douteux: plusGrand > 1.9 * D });
       }
     }
   }
@@ -140,6 +174,52 @@ export function detecterDansGris(gris, l, h, zones, trouPx, sensibilite = 3) {
 }
 
 // ===================== Calage =====================
+
+/**
+ * Cherche le visuel noir autour d'un point touché approximativement (le centre) et renvoie son centre et son rayon (pixels).
+ * Principe : 72 rayons partent du point ; sur chacun, le bord du disque noir est la première zone claire d'au moins 14 pixels
+ * qui suit une zone sombre. Les rayons aberrants (chiffres, lignes blanches) sont écartés, puis un cercle est ajusté.
+ * @returns {{x:number,y:number,rayon:number}|null} null si la forme n'est pas assez nette
+ */
+export function trouverVisuelNoir(gris, l, h, p) {
+  // Seuil sombre/clair : milieu entre les 10 % les plus sombres et les 10 % les plus clairs autour du point
+  const cote = Math.round(Math.min(l, h) * 0.3), echantillon = [];
+  for (let y = Math.max(0, Math.round(p.y) - cote); y < Math.min(h, Math.round(p.y) + cote); y += 3)
+    for (let x = Math.max(0, Math.round(p.x) - cote); x < Math.min(l, Math.round(p.x) + cote); x += 3) echantillon.push(gris[y * l + x]);
+  echantillon.sort((a, b) => a - b);
+  const seuil = (echantillon[Math.floor(echantillon.length * 0.1)] + echantillon[Math.floor(echantillon.length * 0.9)]) / 2;
+  // Portée maximale d'un rayon
+  const portee = Math.round(Math.min(l, h) * 0.45), rayons = [];
+  for (let a = 0; a < 72; a++) {
+    const ca = Math.cos(a / 72 * 6.2832), sa = Math.sin(a / 72 * 6.2832);
+    // Niveau (clair = vrai) du pixel à la distance r
+    const clair = (r) => { const x = Math.round(p.x + ca * r), y = Math.round(p.y + sa * r); return x < 0 || y < 0 || x >= l || y >= h ? true : gris[y * l + x] > seuil; };
+    let sombres = 0;
+    for (let r = 2; r < portee; r++) {
+      if (!clair(r)) { sombres++; continue; }
+      // Zone claire : sustentée sur 14 pixels, après une vraie zone sombre
+      if (sombres > 20) { let ok = true; for (let j = 1; j <= 14 && ok; j++) ok = clair(r + j); if (ok) { rayons.push({ a: a / 72 * 6.2832, r }); break; } }
+    }
+  }
+  if (rayons.length < 36) return null;
+  // Rayon médian et rayons proches de lui
+  const triees = rayons.map((q) => q.r).sort((a, b) => a - b), med = triees[triees.length >> 1];
+  const bons = rayons.filter((q) => Math.abs(q.r - med) < 0.12 * med).map((q) => ({ x: p.x + Math.cos(q.a) * q.r, y: p.y + Math.sin(q.a) * q.r }));
+  if (bons.length < 30) return null;
+  // Ajustement d'un cercle par les moindres carrés (méthode algébrique)
+  let sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, sz = 0, sxz = 0, syz = 0; const n = bons.length;
+  for (const q of bons) { const z = q.x * q.x + q.y * q.y; sx += q.x; sy += q.y; sxx += q.x * q.x; syy += q.y * q.y; sxy += q.x * q.y; sz += z; sxz += q.x * z; syz += q.y * z; }
+  const A = [[sxx, sxy, sx], [sxy, syy, sy], [sx, sy, n]], B = [sxz, syz, sz];
+  const det = (m) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+  const d0 = det(A); if (Math.abs(d0) < 1e-9) return null;
+  const rem = (c) => A.map((ligne, i) => ligne.map((v, j) => (j === c ? B[i] : v)));
+  const a = det(rem(0)) / d0, b = det(rem(1)) / d0, c = det(rem(2)) / d0;
+  const cx = a / 2, cy = b / 2, rayon = Math.sqrt(Math.max(0, c + cx * cx + cy * cy));
+  // Contrôle : écart moyen des points au cercle
+  const ecart = bons.reduce((s, q) => s + Math.abs(Math.hypot(q.x - cx, q.y - cy) - rayon), 0) / n;
+  if (!(rayon > 0.03 * Math.min(l, h)) || ecart > 0.04 * rayon) return null;
+  return { x: cx, y: cy, rayon };
+}
 
 /**
  * Calage à partir de deux points touchés.
@@ -210,17 +290,17 @@ export function ouvrirAnalysePhoto({ cible, trou, valider }) {
   // Visuels, rayon extérieur
   const nombreVisuels = centresVisuels(cible).length;
   // État
-  let etape = "choix", image = null, gris = null, points = [], calage = null, centres = [], impacts = [], sensibilite = 3, loupeActive = false;
+  let etape = "choix", image = null, gris = null, points = [], calage = null, centres = [], impacts = [], sensibilite = 4, manuel = false, loupeActive = false;
 
   // ----- Éléments -----
   const racine = el("div", { class: "photo-ecran" });
   const consigne = el("p", { class: "photo-consigne" });
   const canvas = el("canvas", { class: "photo-canvas" });
-  const loupe = el("canvas", { class: "photo-loupe", width: 120, height: 120, hidden: true });
+  const loupe = el("canvas", { class: "photo-loupe", width: 160, height: 160, hidden: true });
   const actions = el("div", { class: "barre-outils" });
   const resume = el("p", { class: "note" });
   const reglage = el("label", { class: "champ photo-sensibilite" }, el("span", {}, "Sensibilité"),
-    el("input", { type: "range", min: 1, max: 5, step: 1, value: 3, oninput: (e) => { sensibilite = Number(e.target.value); detecter(); } }),
+    el("input", { type: "range", min: 1, max: 5, step: 1, value: 4, oninput: (e) => { sensibilite = Number(e.target.value); detecter(); } }),
     el("small", {}, "Plus haut : plus de trous repérés, mais plus de fausses détections."));
   reglage.hidden = true;
   const fermer = () => { racine.remove(); loupe.remove(); };
@@ -249,7 +329,7 @@ export function ouvrirAnalysePhoto({ cible, trou, valider }) {
   const trouPx = () => Math.max(1, trou * calage.echelle);
   const detecter = () => {
     // Zones : disque un peu plus grand que la dernière zone
-    const zones = centres.map((c) => ({ ...c, rayon: diametreExterieur(cible) / 2 * calage.echelle + 3 * trouPx() }));
+    const zones = centres.map((c) => ({ ...c, rayon: diametreExterieur(cible) / 2 * calage.echelle + 1.5 * trouPx() }));
     // Trous ajoutés à la main, conservés
     const manuels = impacts.filter((i) => i.manuel);
     // Détection automatique
@@ -296,17 +376,17 @@ export function ouvrirAnalysePhoto({ cible, trou, valider }) {
     // Texte et boutons de l'étape
     if (etape === "choix") {
       consigne.textContent = "Prenez la cible en photo, de face, entière et bien éclairée (sans ombre), le plus près possible.";
-      actions.replaceChildren(el("button", { class: "principal", onclick: () => choisir(true) }, "📷 Prendre une photo"), el("button", { onclick: () => choisir(false) }, "Choisir une image"));
+      actions.replaceChildren(el("button", { class: "principal", onclick: () => choisir(true) }, "ðŸ“· Prendre une photo"), el("button", { onclick: () => choisir(false) }, "Choisir une image"));
       resume.textContent = "";
     } else if (etape === "points") {
       consigne.textContent = nombreVisuels === 1
-        ? (points.length === 0 ? "1/2 — Touchez le centre du 10 (la loupe aide à viser)." : `2/2 — Touchez un point du bord de la dernière zone (valeur ${cible.valeurMin}), n'importe où sur le cercle.`)
+        ? (points.length === 0 ? (cible.noir > 0 && !manuel ? "Touchez le centre de la cible, à peu près : le téléphone repère ensuite le visuel noir tout seul." : "1/2 — Touchez le centre du 10 (la loupe aide à viser).") : `2/2 — Touchez un point du bord de la dernière zone (valeur ${cible.valeurMin}), n'importe où sur le cercle.`)
         : (points.length === 0 ? "1/2 — Touchez le centre du premier visuel (en haut à gauche)." : "2/2 — Touchez le centre du dernier visuel (en bas à droite).");
       actions.replaceChildren(el("button", { onclick: () => choisir(true) }, "Autre photo"), el("button", { disabled: points.length === 0, onclick: () => { points = []; rafraichir(); } }, "Refaire le calage"));
       resume.textContent = "";
     } else if (etape === "verif") {
       consigne.textContent = "Vérifiez : les cercles bleus doivent se superposer aux cercles imprimés. Sinon, refaites le calage.";
-      actions.replaceChildren(el("button", { onclick: () => { points = []; calage = null; etape = "points"; rafraichir(); } }, "Refaire le calage"), el("button", { class: "principal", onclick: detecter }, "Chercher les impacts"));
+      actions.replaceChildren(el("button", { onclick: () => { points = []; calage = null; manuel = false; etape = "points"; rafraichir(); } }, "Refaire"), el("button", { onclick: () => { points = []; calage = null; manuel = true; etape = "points"; rafraichir(); } }, "Calage manuel"), el("button", { class: "principal", onclick: detecter }, "Chercher les impacts"));
       resume.textContent = trouPx() < 5 ? "Attention : les trous font moins de 5 pixels sur la photo, rapprochez-vous pour une meilleure détection." : "";
     } else {
       consigne.textContent = "Touchez un cercle pour le retirer, ou un trou manqué pour l'ajouter (la loupe aide à viser).";
@@ -334,18 +414,18 @@ export function ouvrirAnalysePhoto({ cible, trou, valider }) {
   };
   const montrerLoupe = (ev) => {
     if (!image) return;
-    const p = position(ev), Z = 18, ctx = loupe.getContext("2d");
-    // Zone agrandie 3,3 fois autour du doigt
-    ctx.clearRect(0, 0, 120, 120);
-    ctx.drawImage(canvas, p.x - Z, p.y - Z, 2 * Z, 2 * Z, 0, 0, 120, 120);
+    const p = position(ev), Z = Math.min(130, Math.max(20, image.width / 16)), ctx = loupe.getContext("2d");
+    // Zone agrandie autour du doigt : environ un huitième de la largeur de la photo, pour voir la mouche et les cercles voisins
+    ctx.clearRect(0, 0, 160, 160);
+    ctx.drawImage(canvas, p.x - Z, p.y - Z, 2 * Z, 2 * Z, 0, 0, 160, 160);
     ctx.strokeStyle = "#ff3b30"; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(60, 0); ctx.lineTo(60, 120); ctx.moveTo(0, 60); ctx.lineTo(120, 60); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(80, 70); ctx.lineTo(80, 90); ctx.moveTo(70, 80); ctx.lineTo(90, 80); ctx.stroke();
     // Au-dessus du doigt, sans sortir de l'écran
-    loupe.style.left = `${Math.min(window.innerWidth - 124, Math.max(4, ev.clientX - 60))}px`;
-    loupe.style.top = `${Math.max(4, ev.clientY - 150)}px`;
+    loupe.style.left = `${Math.min(window.innerWidth - 164, Math.max(4, ev.clientX - 80))}px`;
+    loupe.style.top = `${Math.max(4, ev.clientY - 190)}px`;
     loupe.hidden = false; loupeActive = true;
   };
-  canvas.addEventListener("pointerdown", (ev) => { if (etape === "points" || etape === "revue") { canvas.setPointerCapture?.(ev.pointerId); montrerLoupe(ev); } });
+  canvas.addEventListener("pointerdown", (ev) => { if (etape === "points" || etape === "revue") { try { canvas.setPointerCapture?.(ev.pointerId); } catch { /* geste synthétique ou terminé */ } montrerLoupe(ev); } });
   canvas.addEventListener("pointermove", (ev) => { if (loupeActive) montrerLoupe(ev); });
   canvas.addEventListener("pointercancel", () => { loupe.hidden = true; loupeActive = false; });
   canvas.addEventListener("pointerup", (ev) => {
@@ -355,7 +435,20 @@ export function ouvrirAnalysePhoto({ cible, trou, valider }) {
     if (etape === "points") {
       // Point de calage
       points.push(p);
-      if (points.length === 2) {
+      // Cible à un seul visuel noir : le premier toucher suffit, le téléphone repère le disque noir
+      if (points.length === 1 && !manuel && cible.noir > 0 && nombreVisuels === 1) {
+        const noir = trouverVisuelNoir(gris, image.width, image.height, p);
+        if (noir) {
+          points = [{ x: noir.x, y: noir.y }];
+          calage = { a: { x: noir.x, y: noir.y }, echelle: noir.rayon / (cible.noir / 2), rotation: 0 };
+          centres = centresPixels(cible, calage);
+          etape = "verif";
+          toast("Visuel noir repéré : vérifiez les cercles bleus.", 3500);
+        } else {
+          toast("Visuel noir non repéré : touchez maintenant un point du bord de la dernière zone.", 4500);
+          manuel = true;
+        }
+      } else if (points.length === 2) {
         calage = caler(cible, points[0], points[1]);
         centres = centresPixels(cible, calage);
         etape = "verif";
