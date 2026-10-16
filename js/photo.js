@@ -391,6 +391,12 @@ export function ouvrirAnalysePhoto({ cible, trou, attendus = null, valider }) {
   const racine = el("div", { class: "photo-ecran" });
   const consigne = el("p", { class: "photo-consigne" });
   const canvas = el("canvas", { class: "photo-canvas" });
+  // Zone qui montre une partie de la photo : zoom (pincement, boutons, molette) et déplacement à deux doigts
+  const zone = el("div", { class: "photo-zone" }, canvas);
+  let zoom = 1, tx = 0, ty = 0;
+  const barreZoom = el("div", { class: "barre-outils photo-zoom" },
+    el("button", { onclick: () => zoomerBouton(1 / 1.6) }, "−"), el("button", { onclick: () => zoomerBouton(1.6) }, "+"),
+    el("button", { onclick: () => { zoom = 1; tx = 0; ty = 0; appliquerZoom(); rafraichir(); } }, "⤢ Photo entière"));
   const loupe = el("canvas", { class: "photo-loupe", width: 160, height: 160, hidden: true });
   const actions = el("div", { class: "barre-outils" });
   const resume = el("p", { class: "note" });
@@ -408,7 +414,7 @@ export function ouvrirAnalysePhoto({ cible, trou, attendus = null, valider }) {
   zoneCoups.hidden = true;  const fermer = () => { racine.remove(); loupe.remove(); };
   racine.append(
     el("div", { class: "photo-entete" }, el("strong", {}, "Analyse d'une photo de cible"), el("button", { onclick: fermer }, "Fermer")),
-    consigne, canvas, actions, zoneCoups, reglage, resume);
+    consigne, zone, barreZoom, actions, zoneCoups, reglage, resume);
   document.body.append(racine, loupe);
 
   // ----- Choix de la photo -----
@@ -419,7 +425,7 @@ export function ouvrirAnalysePhoto({ cible, trou, attendus = null, valider }) {
       if (!f) return;
       try {
         image = await chargerImage(f); gris = enGris(image);
-        canvas.width = image.width; canvas.height = image.height;
+        canvas.width = image.width; canvas.height = image.height; zoom = 1; tx = 0; ty = 0; appliquerZoom();
         points = []; calage = null; impacts = []; etape = "points"; rafraichir();
       } catch { toast("Cette image ne peut pas être lue.", 4000); }
     });
@@ -446,9 +452,9 @@ export function ouvrirAnalysePhoto({ cible, trou, attendus = null, valider }) {
     const ctx = canvas.getContext("2d");
     // Photo ou vide
     if (image) ctx.drawImage(image, 0, 0); else ctx.clearRect(0, 0, canvas.width, canvas.height);
-    canvas.hidden = !image;
+    zone.hidden = !image; barreZoom.hidden = !image;
     // Épaisseur de trait proportionnelle à la photo
-    const e = Math.max(1.5, canvas.width / 450);
+    const e = Math.max(1.5, canvas.width / 450) / Math.sqrt(zoom);
     // Points de calage touchés
     for (const p of points) {
       ctx.strokeStyle = "#ff3b30"; ctx.lineWidth = e;
@@ -568,10 +574,61 @@ export function ouvrirAnalysePhoto({ cible, trou, attendus = null, valider }) {
     loupe.style.top = `${Math.max(4, ev.clientY - 190)}px`;
     loupe.hidden = false; loupeActive = true;
   };
-  canvas.addEventListener("pointerdown", (ev) => { if (etape === "points" || etape === "revue") { try { canvas.setPointerCapture?.(ev.pointerId); } catch { /* geste synthétique ou terminé */ } montrerLoupe(ev); } });
-  canvas.addEventListener("pointermove", (ev) => { if (loupeActive) montrerLoupe(ev); });
-  canvas.addEventListener("pointercancel", () => { loupe.hidden = true; loupeActive = false; });
-  canvas.addEventListener("pointerup", (ev) => {
+  // ----- Zoom et déplacement -----
+  // Applique le zoom en gardant la photo remplissant la zone (pas de bord vide)
+  const appliquerZoom = () => {
+    const l = zone.clientWidth, h = canvas.offsetHeight;
+    zoom = Math.min(10, Math.max(1, zoom));
+    tx = Math.min(0, Math.max(l - l * zoom, tx)); ty = Math.min(0, Math.max(h - h * zoom, ty));
+    canvas.style.transform = zoom === 1 ? "" : `translate(${tx}px, ${ty}px) scale(${zoom})`;
+  };
+  // Zoom d'un facteur f autour d'un point de la zone (pixels de la zone)
+  const zoomerAutour = (f, cx, cy) => {
+    const avant = zoom;
+    zoom = Math.min(10, Math.max(1, zoom * f));
+    tx = cx - (cx - tx) * zoom / avant; ty = cy - (cy - ty) * zoom / avant;
+    appliquerZoom();
+  };
+  const zoomerBouton = (f) => { zoomerAutour(f, zone.clientWidth / 2, zone.clientHeight / 2); rafraichir(); };
+  // Doigts posés : un doigt vise (loupe), deux doigts zooment et déplacent
+  const doigts = new Map();
+  let pince = null, geste2 = false;
+  canvas.addEventListener("wheel", (ev) => {
+    ev.preventDefault();
+    const r = zone.getBoundingClientRect();
+    zoomerAutour(ev.deltaY < 0 ? 1.25 : 1 / 1.25, ev.clientX - r.left, ev.clientY - r.top);
+    rafraichir();
+  }, { passive: false });
+  canvas.addEventListener("pointerdown", (ev) => {
+    doigts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    // Deuxième doigt : on abandonne la visée et on passe au zoom
+    if (doigts.size === 2) {
+      geste2 = true; loupe.hidden = true; loupeActive = false;
+      const [a, b] = [...doigts.values()];
+      pince = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, zoom, tx, ty };
+      return;
+    }
+    if (geste2 || doigts.size > 2) return;
+    if (etape === "points" || etape === "revue") { try { canvas.setPointerCapture?.(ev.pointerId); } catch { /* geste synthétique ou terminé */ } montrerLoupe(ev); }
+  });
+  canvas.addEventListener("pointermove", (ev) => {
+    if (doigts.has(ev.pointerId)) doigts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    // Pincement : échelle selon l'écartement, déplacement selon le milieu des deux doigts
+    if (pince && doigts.size === 2) {
+      const [a, b] = [...doigts.values()], r = zone.getBoundingClientRect();
+      const f = (Math.hypot(a.x - b.x, a.y - b.y) || 1) / pince.d;
+      const nz = Math.min(10, Math.max(1, pince.zoom * f));
+      const c0x = pince.cx - r.left, c0y = pince.cy - r.top, cx = (a.x + b.x) / 2 - r.left, cy = (a.y + b.y) / 2 - r.top;
+      zoom = nz; tx = cx - (c0x - pince.tx) * nz / pince.zoom; ty = cy - (c0y - pince.ty) * nz / pince.zoom;
+      appliquerZoom();
+      return;
+    }
+    if (loupeActive) montrerLoupe(ev);
+  });
+  canvas.addEventListener("pointercancel", (ev) => { doigts.delete(ev.pointerId); if (!doigts.size) { geste2 = false; pince = null; rafraichir(); } loupe.hidden = true; loupeActive = false; });  canvas.addEventListener("pointerup", (ev) => {
+    // Fin d'un geste de zoom : pas de point posé, et on redessine avec les traits à la bonne épaisseur
+    doigts.delete(ev.pointerId);
+    if (geste2) { if (!doigts.size) { geste2 = false; pince = null; rafraichir(); } return; }
     // Fin de la visée
     loupe.hidden = true; loupeActive = false;
     const p = position(ev);
@@ -599,7 +656,7 @@ export function ouvrirAnalysePhoto({ cible, trou, attendus = null, valider }) {
       rafraichir();
     } else if (etape === "revue") {
       // Retrait d'un impact proche, sinon ajout à la main
-      const rayon = Math.max(trouPx() * 1.2, canvas.width / 60);
+      const rayon = Math.max(trouPx() * 1.2, canvas.width / 60 / zoom);
       const proche = impacts.map((i) => ({ i, d: Math.hypot(enPixels(i).x - p.x, enPixels(i).y - p.y) })).filter((o) => o.d <= rayon).sort((a, b) => a.d - b.d)[0];
       if (proche) impacts.splice(impacts.indexOf(proche.i), 1);
       else {

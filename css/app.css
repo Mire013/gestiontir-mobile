@@ -163,3 +163,6 @@ canvas.photo-loupe { position: fixed; z-index: 40; width: 160px; height: 160px; 
 .photo-sensibilite input { min-height: 30px; padding: 0; }
 .photo-sensibilite[hidden] { display: none; }
 .photo-coups[hidden] { display: none; }
+.photo-zone { position: relative; overflow: hidden; border-radius: 10px; touch-action: none; background: #000; }
+.photo-zone[hidden], .photo-zoom[hidden] { display: none; }
+canvas.photo-canvas { transform-origin: 0 0; }
