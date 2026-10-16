@@ -505,7 +505,7 @@ function ecranSessionIssf(id, onglet = "cible") {
       modifiable ? el("div", { class: "barre-outils" },
         boutonMode,
         el("button", { onclick: annuler }, "Annuler le dernier"),
-        el("button", { onclick: () => ouvrirAnalysePhoto({ cible: d.objetCible, trou, valider: ajouterLot }) }, "📷 Photo"),
+        el("button", { onclick: () => ouvrirAnalysePhoto({ cible: d.objetCible, trou, attendus: modeEssais ? null : Math.max(0, d.impactsParCarton - s.impacts.filter((i) => i.carton === courant).length), valider: ajouterLot }) }, "📷 Photo"),
         el("button", { onclick: () => vueCible.zoomerCentre(1 / 1.5) }, "−"),
         el("button", { onclick: () => vueCible.zoomerCentre(1.5) }, "+"),
         el("button", { onclick: () => vueCible.ajuster() }, "⤢")) : el("div", { class: "barre-outils" },

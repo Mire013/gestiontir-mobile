@@ -162,3 +162,4 @@ canvas.photo-canvas { display: block; width: 100%; height: auto; border-radius: 
 canvas.photo-loupe { position: fixed; z-index: 40; width: 160px; height: 160px; border: 3px solid var(--accent); border-radius: 50%; background: #000; pointer-events: none; box-shadow: 0 4px 16px rgba(0,0,0,.45); }
 .photo-sensibilite input { min-height: 30px; padding: 0; }
 .photo-sensibilite[hidden] { display: none; }
+.photo-coups[hidden] { display: none; }

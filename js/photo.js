@@ -85,9 +85,10 @@ const REGLAGES = { 1: [40, 7], 2: [30, 6], 3: [22, 5], 4: [16, 4], 5: [11, 3.2] 
  * @param {Array<{visuel:number,x:number,y:number,rayon:number}>} zones disques à analyser (pixels)
  * @param {number} trouPx diamètre attendu d'un trou (pixels)
  * @param {number} sensibilite de 1 à 5
+ * @param {{relache?: boolean}} options relache : seuils assouplis, pour chercher les trous manquants (plus de fausses détections possibles)
  * @returns {Array<{visuel:number,x:number,y:number,force:number,douteux:boolean}>} trous trouvés (pixels)
  */
-export function detecterDansGris(gris, l, h, zones, trouPx, sensibilite = 3) {
+export function detecterDansGris(gris, l, h, zones, trouPx, sensibilite = 3, options = {}) {
   // Taille de référence d'un trou
   const D = Math.max(6, trouPx);
   // Petit carré (cœur du trou) et grand carré (papier autour)
@@ -161,7 +162,7 @@ export function detecterDansGris(gris, l, h, zones, trouPx, sensibilite = 3) {
         if (plusGrand > 3.2 * D || plusGrand / plusPetit > 2.4 || aire / (bw * bh) < 0.4) continue;
         // Un chiffre ou un trait imprimé ne remplit pas le cœur de la tache : on l'écarte
         const xc = x0 + sx / sp, yc = y0 + sy / sp, dens = densite(gris, l, h, xc, yc, D, pol);
-        if (dens < SEUIL_DENSITE) continue;
+        if (dens < (options.relache ? 0.45 : SEUIL_DENSITE)) continue;
         // Trou trouvé (centre pondéré)
         trouves.push({ visuel: z.visuel, x: xc, y: yc, force: pic / seuil, densite: dens, douteux: plusGrand > 1.9 * D });
       }
@@ -170,7 +171,7 @@ export function detecterDansGris(gris, l, h, zones, trouPx, sensibilite = 3) {
 
   // Noyaux très sombres (le fond d'un trou est presque noir, même dans le noir de la cible) : détecteur principal
   const uniques = [];
-  for (const z of zones) uniques.push(...noyauxSombres(gris, l, h, ii, z, D, r2).map((n) => ({ ...n, visuel: z.visuel })));
+  for (const z of zones) uniques.push(...noyauxSombres(gris, l, h, ii, z, D, r2, !!options.relache).map((n) => ({ ...n, visuel: z.visuel })));
   // Taches de contraste local : seulement si elles ne retrouvent pas un trou déjà vu (même tache vue des deux polarités : la plus forte)
   trouves.sort((a, b) => b.force - a.force);
   for (const t of trouves) if (!uniques.some((u) => Math.hypot(u.x - t.x, u.y - t.y) < 0.8 * D)) uniques.push(t);
@@ -182,17 +183,19 @@ export function detecterDansGris(gris, l, h, zones, trouPx, sensibilite = 3) {
  * ou d'un trait imprimé). Les noyaux proches sont regroupés ; un groupe allongé est découpé en plusieurs trous.
  * @returns {Array<{x:number,y:number,force:number,densite:number,douteux:boolean}>}
  */
-function noyauxSombres(gris, l, h, ii, z, D, r2) {
+function noyauxSombres(gris, l, h, ii, z, D, r2, relache) {
+  // Seuils du noyau (assouplis pour chercher les trous manquants)
+  const seuilNoyau = relache ? 40 : SEUIL_NOYAU, fractionNoyau = relache ? 0.4 : FRACTION_NOYAU;
   // Pixels du noyau : sous 30, et sous 30 % du fond local (photo sombre : seuil plus bas)
   const x0 = Math.max(0, Math.floor(z.x - z.rayon)), x1 = Math.min(l - 1, Math.ceil(z.x + z.rayon));
   const y0 = Math.max(0, Math.floor(z.y - z.rayon)), y1 = Math.min(h - 1, Math.ceil(z.y + z.rayon));
   const w = x1 - x0 + 1, hz = y1 - y0 + 1, sombre = new Uint8Array(w * hz);
   for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
     // Pixel nettement sombre (test rapide) dans le disque
-    if (gris[y * l + x] >= SEUIL_NOYAU || (x - z.x) ** 2 + (y - z.y) ** 2 > z.rayon * z.rayon) continue;
+    if (gris[y * l + x] >= seuilNoyau || (x - z.x) ** 2 + (y - z.y) ** 2 > z.rayon * z.rayon) continue;
     // Plus sombre que 30 % du fond local, et d'au moins 25 niveaux : le bruit d'une photo sombre ne suffit pas
     const fond = moyenne(ii, l, h, x, y, r2);
-    if (gris[y * l + x] < FRACTION_NOYAU * fond && fond - gris[y * l + x] >= 25) sombre[(y - y0) * w + (x - x0)] = 1;
+    if (gris[y * l + x] < fractionNoyau * fond && fond - gris[y * l + x] >= 25) sombre[(y - y0) * w + (x - x0)] = 1;
   }
   // Pixels isolés (grain, bruit) écartés : un pixel du noyau a au moins un voisin sombre
   const px = [];
@@ -222,7 +225,8 @@ function noyauxSombres(gris, l, h, ii, z, D, r2) {
     groupes.push(membres);
   }
 
-  const resultat = [];
+  // Description de chaque groupe : centre, axe principal, longueur
+  const decrits = [];
   for (const m of groupes) {
     // Trop peu de pixels sombres : poussière ou grain
     if (m.length < 5) continue;
@@ -231,21 +235,33 @@ function noyauxSombres(gris, l, h, ii, z, D, r2) {
     let cxx = 0, cyy = 0, cxy = 0;
     for (const p of m) { cxx += (p.x - mx) ** 2; cyy += (p.y - my) ** 2; cxy += (p.x - mx) * (p.y - my); }
     const angle = 0.5 * Math.atan2(2 * cxy, cxx - cyy), ux = Math.cos(angle), uy = Math.sin(angle);
-    let pmin = Infinity, pmax = -Infinity;
-    for (const p of m) { const t = (p.x - mx) * ux + (p.y - my) * uy; pmin = Math.min(pmin, t); pmax = Math.max(pmax, t); }
+    let pmin = Infinity, pmax = -Infinity, qmin = Infinity, qmax = -Infinity;
+    for (const p of m) {
+      const t = (p.x - mx) * ux + (p.y - my) * uy, q = -(p.x - mx) * uy + (p.y - my) * ux;
+      pmin = Math.min(pmin, t); pmax = Math.max(pmax, t); qmin = Math.min(qmin, q); qmax = Math.max(qmax, q);
+    }
     const longueur = pmax - pmin;
-    // Largeur du groupe, perpendiculairement à l'axe : un trait imprimé (cercle, chiffre) est long et fin, un noyau de trou est ramassé
-    let qmin = Infinity, qmax = -Infinity;
-    for (const p of m) { const q = -(p.x - mx) * uy + (p.y - my) * ux; qmin = Math.min(qmin, q); qmax = Math.max(qmax, q); }
+    // Un trait imprimé (cercle, chiffre) est long et fin, un noyau de trou est ramassé
     if (qmax - qmin < 0.35 * longueur && longueur > 4) continue;
     // Groupe démesuré (ligne, bord de la photo, tapis) : ignoré
     if (longueur > 3.2 * D) continue;
-    // Nombre de trous : 1 sauf si le groupe est long (des trous qui se touchent)
-    const n = Math.min(4, Math.max(1, Math.round((longueur - 0.6 * D) / (0.9 * D)) + 1));
+    decrits.push({ nb: m.length, mx, my, ux, uy, pmin, pmax, longueur });
+  }
+
+  // Taille d'un noyau de trou isolé, mesurée sur cette photo : médiane du nombre de pixels des petits groupes
+  const seuls = decrits.filter((g) => g.longueur <= 1.1 * D).map((g) => g.nb).sort((a, b) => a - b);
+  const unite = seuls.length >= 3 ? seuls[seuls.length >> 1] : null;
+
+  const resultat = [];
+  for (const g of decrits) {
+    // Nombre de trous d'un groupe qui s'étire : selon sa longueur (en diamètres de trou) et selon son nombre de pixels sombres (en noyaux isolés)
+    const parLongueur = Math.max(1, Math.round((g.longueur - 0.9 * D) / D) + 1);
+    const parPixels = unite ? Math.max(1, Math.round(g.nb / unite)) : parLongueur;
+    const n = g.longueur <= 1.1 * D ? 1 : Math.min(4, Math.round((parLongueur + Math.min(parPixels, parLongueur + 1)) / 2));
     for (let i = 0; i < n; i++) {
       // Un seul trou : centre du groupe ; plusieurs : répartis le long de l'axe (positions relatives au centre du groupe), un peu en retrait des extrémités
-      const t = n === 1 ? 0 : pmin + 0.3 * D + i * (longueur - 0.6 * D) / (n - 1);
-      resultat.push({ x: mx + t * ux, y: my + t * uy, force: Math.min(3, m.length / 12), densite: 1, douteux: n > 1 || longueur > 1.2 * D });
+      const t = n === 1 ? 0 : g.pmin + 0.3 * D + i * (g.longueur - 0.6 * D) / (n - 1);
+      resultat.push({ x: g.mx + t * g.ux, y: g.my + t * g.uy, force: Math.min(3, g.nb / 12), densite: 1, douteux: n > 1 || g.longueur > 1.2 * D });
     }
   }
   return resultat;
@@ -362,13 +378,14 @@ function enGris(canvas) {
 /**
  * Ouvre l'écran d'analyse d'une photo de cible.
  * @param {{ cible: object, trou: number, valider: (impacts: Array<{visuel:number,x:number,y:number}>) => void }} options
- *   cible : cible de la liste du PC ; trou : diamètre du trou (mm) ; valider : reçoit les impacts retenus (mm).
+ *   cible : cible de la liste du PC ; trou : diamètre du trou (mm) ; attendus : nombre de coups probablement tirés (modifiable) ;
+ *   valider : reçoit les impacts retenus (mm).
  */
-export function ouvrirAnalysePhoto({ cible, trou, valider }) {
+export function ouvrirAnalysePhoto({ cible, trou, attendus = null, valider }) {
   // Visuels, rayon extérieur
   const nombreVisuels = centresVisuels(cible).length;
   // État
-  let etape = "choix", image = null, gris = null, points = [], calage = null, centres = [], impacts = [], sensibilite = 4, manuel = false, loupeActive = false;
+  let etape = "choix", image = null, gris = null, points = [], calage = null, centres = [], impacts = [], sensibilite = 4, manuel = false, loupeActive = false, coups = attendus > 0 ? Math.round(attendus) : null;
 
   // ----- Éléments -----
   const racine = el("div", { class: "photo-ecran" });
@@ -381,10 +398,17 @@ export function ouvrirAnalysePhoto({ cible, trou, valider }) {
     el("input", { type: "range", min: 1, max: 5, step: 1, value: 4, oninput: (e) => { sensibilite = Number(e.target.value); detecter(); } }),
     el("small", {}, "Plus haut : plus de trous repérés, mais plus de fausses détections."));
   reglage.hidden = true;
-  const fermer = () => { racine.remove(); loupe.remove(); };
+  // Nombre de coups tirés : sert à repérer les trous manquants (ou en trop)
+  const champCoups = el("input", { type: "number", inputmode: "numeric", min: 0, max: 999, value: coups ?? "", placeholder: "ex. 14",
+    oninput: (e) => { coups = e.target.value === "" ? null : Math.max(0, Math.round(Number(e.target.value))); majCoups(); } });
+  const etatCoups = el("small", {});
+  const boutonCompleter = el("button", { onclick: () => completer() }, "Chercher les trous manquants");
+  const boutonRetirer = el("button", { onclick: () => retirerExces() }, "Retirer les moins sûrs");
+  const zoneCoups = el("div", { class: "champ photo-coups" }, el("span", {}, "Nombre de coups tirés sur cette cible"), champCoups, etatCoups, el("div", { class: "barre-outils" }, boutonCompleter, boutonRetirer));
+  zoneCoups.hidden = true;  const fermer = () => { racine.remove(); loupe.remove(); };
   racine.append(
     el("div", { class: "photo-entete" }, el("strong", {}, "Analyse d'une photo de cible"), el("button", { onclick: fermer }, "Fermer")),
-    consigne, canvas, actions, reglage, resume);
+    consigne, canvas, actions, zoneCoups, reglage, resume);
   document.body.append(racine, loupe);
 
   // ----- Choix de la photo -----
@@ -409,7 +433,7 @@ export function ouvrirAnalysePhoto({ cible, trou, valider }) {
     // Zones : disque un peu plus grand que la dernière zone
     const zones = centres.map((c) => ({ ...c, rayon: diametreExterieur(cible) / 2 * calage.echelle + 0.5 * trouPx() }));
     // Trous ajoutés à la main, conservés
-    const manuels = impacts.filter((i) => i.manuel);
+    const manuels = impacts.filter((i) => i.manuel || i.propose);
     // Détection automatique
     const auto = detecterDansGris(gris, image.width, image.height, zones, trouPx(), sensibilite).map((t) => ({ ...t, ...enMm(calage, centres[t.visuel], t) }));
     // Ordre de saisie arbitraire : par visuel, puis de haut en bas et de gauche à droite
@@ -475,6 +499,43 @@ export function ouvrirAnalysePhoto({ cible, trou, valider }) {
       resume.textContent = `${n} impact(s) : ${impacts.filter((i) => !i.manuel).length} repéré(s), ${impacts.filter((i) => i.manuel).length} ajouté(s) à la main${douteux ? `, ${douteux} à vérifier (orange : peut-être deux trous voisins)` : ""}. Échelle : ${nombre(calage.echelle, 1)} pixels par mm.`;
     }
     reglage.hidden = etape !== "revue";
+    zoneCoups.hidden = etape !== "revue";
+    if (etape === "revue") majCoups();
+  };
+
+  // ----- Nombre de coups : trous manquants ou en trop -----
+  // Valeur d'un trou pour les classer : force de la détection × densité du cœur
+  const valeurTrou = (i) => (i.force ?? 1) * (i.densite ?? 1);
+  const majCoups = () => {
+    const n = impacts.length;
+    boutonCompleter.hidden = !(coups > n); boutonRetirer.hidden = !(coups > 0 && n > coups);
+    etatCoups.textContent = !(coups > 0) ? "Indiquez le nombre de coups tirés : le téléphone vous dira s'il manque des trous."
+      : n < coups ? `Il manque ${coups - n} trou(s) : ${n} repéré(s) sur ${coups}.`
+      : n > coups ? `${n - coups} trou(s) en trop : ${n} repéré(s) pour ${coups} coups.` : `Le compte est bon : ${n} trous pour ${coups} coups.`;
+  };
+  // Recherche plus large, qui ne propose que des candidats vraisemblables (hors des axes où sont imprimés les chiffres)
+  const completer = () => {
+    const manque = coups - impacts.length;
+    if (!(manque > 0)) return;
+    const zones = centres.map((c) => ({ ...c, rayon: diametreExterieur(cible) / 2 * calage.echelle + 0.5 * trouPx() }));
+    const candidats = detecterDansGris(gris, image.width, image.height, zones, trouPx(), 5, { relache: true })
+      // Pas déjà dans la liste
+      .filter((c) => !impacts.some((i) => { const p = enPixels(i); return Math.hypot(p.x - c.x, p.y - c.y) < 0.9 * trouPx(); }))
+      .map((c) => ({ ...c, mm: enMm(calage, centres[c.visuel], c) }))
+      // Un chiffre imprimé sur un axe (cible à un seul visuel) n'est pas retenu
+      .filter((c) => nombreVisuels > 1 || (Math.abs(c.mm.x) > 0.8 * trou && Math.abs(c.mm.y) > 0.8 * trou))
+      .sort((a, b) => valeurTrou(b) - valeurTrou(a)).slice(0, manque);
+    // Ajout, signalé en orange
+    for (const c of candidats) impacts.push({ ...c, x: c.mm.x, y: c.mm.y, douteux: true, propose: true });
+    toast(candidats.length === 0 ? "Aucun autre trou vraisemblable : touchez la cible pour ajouter les trous manquants." : candidats.length < manque ? `${candidats.length} trou(s) proposé(s) (orange) ; touchez la cible pour ajouter les autres.` : `${candidats.length} trou(s) proposé(s) en orange : vérifiez-les.`, 5000);
+    rafraichir();
+  };
+  const retirerExces = () => {
+    // Retire d'abord les trous détectés les moins sûrs (jamais ceux ajoutés à la main)
+    const exces = impacts.length - coups;
+    const faibles = impacts.filter((i) => !i.manuel).sort((a, b) => valeurTrou(a) - valeurTrou(b)).slice(0, exces);
+    impacts = impacts.filter((i) => !faibles.includes(i));
+    rafraichir();
   };
 
   // Position d'un impact (mm) sur la photo (pixels)
@@ -492,12 +553,16 @@ export function ouvrirAnalysePhoto({ cible, trou, valider }) {
   };
   const montrerLoupe = (ev) => {
     if (!image) return;
-    const p = position(ev), Z = Math.min(130, Math.max(20, image.width / 16)), ctx = loupe.getContext("2d");
+    const p = position(ev), ctx = loupe.getContext("2d");
+    // Pour ajouter un trou : zone serrée (environ 4 diamètres de trou) ; pour le calage : un huitième de la photo
+    const Z = etape === "revue" ? Math.min(130, Math.max(24, trouPx() * 2.6)) : Math.min(130, Math.max(20, image.width / 16));
     // Zone agrandie autour du doigt : environ un huitième de la largeur de la photo, pour voir la mouche et les cercles voisins
     ctx.clearRect(0, 0, 160, 160);
-    ctx.drawImage(canvas, p.x - Z, p.y - Z, 2 * Z, 2 * Z, 0, 0, 160, 160);
+    ctx.drawImage(image, p.x - Z, p.y - Z, 2 * Z, 2 * Z, 0, 0, 160, 160);
     ctx.strokeStyle = "#ff3b30"; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(80, 70); ctx.lineTo(80, 90); ctx.moveTo(70, 80); ctx.lineTo(90, 80); ctx.stroke();
+    // Cercle de la taille réelle d'un trou (diamètre du calibre) : à centrer sur le trou à ajouter
+    if (etape === "revue") { ctx.strokeStyle = "#ffd60a"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(80, 80, trouPx() / 2 * 160 / (2 * Z), 0, Math.PI * 2); ctx.stroke(); }
     // Au-dessus du doigt, sans sortir de l'écran
     loupe.style.left = `${Math.min(window.innerWidth - 164, Math.max(4, ev.clientX - 80))}px`;
     loupe.style.top = `${Math.max(4, ev.clientY - 190)}px`;
