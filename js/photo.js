@@ -75,6 +75,8 @@ function densite(gris, l, h, cx, cy, D, pol) {
 /** Réglages selon la sensibilité (1 = prudent, 5 = très sensible) : plancher de contraste et facteur de bruit. */
 // Densité minimale du cœur d'une tache pour être un trou (les chiffres imprimés sont bien en dessous)
 const SEUIL_DENSITE = 0.55;
+// Noyau d'un trou : pixel sous SEUIL_NOYAU et sous FRACTION_NOYAU du fond local
+const SEUIL_NOYAU = 30, FRACTION_NOYAU = 0.3;
 const REGLAGES = { 1: [40, 7], 2: [30, 6], 3: [22, 5], 4: [16, 4], 5: [11, 3.2] };
 
 /**
@@ -166,11 +168,87 @@ export function detecterDansGris(gris, l, h, zones, trouPx, sensibilite = 3) {
     }
   }
 
-  // Doublons (une même tache vue des deux polarités) : on garde la plus forte
-  trouves.sort((a, b) => b.force - a.force);
+  // Noyaux très sombres (le fond d'un trou est presque noir, même dans le noir de la cible) : détecteur principal
   const uniques = [];
+  for (const z of zones) uniques.push(...noyauxSombres(gris, l, h, ii, z, D, r2).map((n) => ({ ...n, visuel: z.visuel })));
+  // Taches de contraste local : seulement si elles ne retrouvent pas un trou déjà vu (même tache vue des deux polarités : la plus forte)
+  trouves.sort((a, b) => b.force - a.force);
   for (const t of trouves) if (!uniques.some((u) => Math.hypot(u.x - t.x, u.y - t.y) < 0.8 * D)) uniques.push(t);
   return uniques;
+}
+
+/**
+ * Trous repérés par leur noyau très sombre : pixels bien plus sombres que le papier voisin (jamais le cas d'un chiffre
+ * ou d'un trait imprimé). Les noyaux proches sont regroupés ; un groupe allongé est découpé en plusieurs trous.
+ * @returns {Array<{x:number,y:number,force:number,densite:number,douteux:boolean}>}
+ */
+function noyauxSombres(gris, l, h, ii, z, D, r2) {
+  // Pixels du noyau : sous 30, et sous 30 % du fond local (photo sombre : seuil plus bas)
+  const x0 = Math.max(0, Math.floor(z.x - z.rayon)), x1 = Math.min(l - 1, Math.ceil(z.x + z.rayon));
+  const y0 = Math.max(0, Math.floor(z.y - z.rayon)), y1 = Math.min(h - 1, Math.ceil(z.y + z.rayon));
+  const w = x1 - x0 + 1, hz = y1 - y0 + 1, sombre = new Uint8Array(w * hz);
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    // Pixel nettement sombre (test rapide) dans le disque
+    if (gris[y * l + x] >= SEUIL_NOYAU || (x - z.x) ** 2 + (y - z.y) ** 2 > z.rayon * z.rayon) continue;
+    // Plus sombre que 30 % du fond local, et d'au moins 25 niveaux : le bruit d'une photo sombre ne suffit pas
+    const fond = moyenne(ii, l, h, x, y, r2);
+    if (gris[y * l + x] < FRACTION_NOYAU * fond && fond - gris[y * l + x] >= 25) sombre[(y - y0) * w + (x - x0)] = 1;
+  }
+  // Pixels isolés (grain, bruit) écartés : un pixel du noyau a au moins un voisin sombre
+  const px = [];
+  for (let y = 1; y < hz - 1; y++) for (let x = 1; x < w - 1; x++) {
+    if (!sombre[y * w + x]) continue;
+    let voisins = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if ((dx || dy) && sombre[(y + dy) * w + x + dx]) voisins++;
+    if (voisins >= 0) px.push({ x: x + x0, y: y + y0 });
+  }
+  // Trop de pixels sombres (fond noir dans la zone) : ce détecteur ne s'applique pas
+  if (px.length === 0 || px.length > 30000) return [];
+  // Regroupement des pixels proches (distance maximale 0,55 diamètre de trou), par grille
+  const g = Math.max(2, D * 0.55), cases = new Map();
+  px.forEach((p, i) => { const k = `${Math.floor(p.x / g)},${Math.floor(p.y / g)}`; (cases.get(k) ?? cases.set(k, []).get(k)).push(i); });
+  const groupe = new Int32Array(px.length).fill(-1), groupes = [];
+  for (let i0 = 0; i0 < px.length; i0++) {
+    if (groupe[i0] >= 0) continue;
+    const pile = [i0], membres = [];
+    groupe[i0] = groupes.length;
+    while (pile.length) {
+      const i = pile.pop(); membres.push(px[i]);
+      const cx = Math.floor(px[i].x / g), cy = Math.floor(px[i].y / g);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) for (const j of cases.get(`${cx + dx},${cy + dy}`) ?? []) {
+        if (groupe[j] < 0 && Math.hypot(px[j].x - px[i].x, px[j].y - px[i].y) <= g) { groupe[j] = groupes.length; pile.push(j); }
+      }
+    }
+    groupes.push(membres);
+  }
+
+  const resultat = [];
+  for (const m of groupes) {
+    // Trop peu de pixels sombres : poussière ou grain
+    if (m.length < 5) continue;
+    // Centre, axe principal et longueur du groupe
+    const mx = m.reduce((s, p) => s + p.x, 0) / m.length, my = m.reduce((s, p) => s + p.y, 0) / m.length;
+    let cxx = 0, cyy = 0, cxy = 0;
+    for (const p of m) { cxx += (p.x - mx) ** 2; cyy += (p.y - my) ** 2; cxy += (p.x - mx) * (p.y - my); }
+    const angle = 0.5 * Math.atan2(2 * cxy, cxx - cyy), ux = Math.cos(angle), uy = Math.sin(angle);
+    let pmin = Infinity, pmax = -Infinity;
+    for (const p of m) { const t = (p.x - mx) * ux + (p.y - my) * uy; pmin = Math.min(pmin, t); pmax = Math.max(pmax, t); }
+    const longueur = pmax - pmin;
+    // Largeur du groupe, perpendiculairement à l'axe : un trait imprimé (cercle, chiffre) est long et fin, un noyau de trou est ramassé
+    let qmin = Infinity, qmax = -Infinity;
+    for (const p of m) { const q = -(p.x - mx) * uy + (p.y - my) * ux; qmin = Math.min(qmin, q); qmax = Math.max(qmax, q); }
+    if (qmax - qmin < 0.35 * longueur && longueur > 4) continue;
+    // Groupe démesuré (ligne, bord de la photo, tapis) : ignoré
+    if (longueur > 3.2 * D) continue;
+    // Nombre de trous : 1 sauf si le groupe est long (des trous qui se touchent)
+    const n = Math.min(4, Math.max(1, Math.round((longueur - 0.6 * D) / (0.9 * D)) + 1));
+    for (let i = 0; i < n; i++) {
+      // Un seul trou : centre du groupe ; plusieurs : répartis le long de l'axe (positions relatives au centre du groupe), un peu en retrait des extrémités
+      const t = n === 1 ? 0 : pmin + 0.3 * D + i * (longueur - 0.6 * D) / (n - 1);
+      resultat.push({ x: mx + t * ux, y: my + t * uy, force: Math.min(3, m.length / 12), densite: 1, douteux: n > 1 || longueur > 1.2 * D });
+    }
+  }
+  return resultat;
 }
 
 // ===================== Calage =====================
@@ -329,7 +407,7 @@ export function ouvrirAnalysePhoto({ cible, trou, valider }) {
   const trouPx = () => Math.max(1, trou * calage.echelle);
   const detecter = () => {
     // Zones : disque un peu plus grand que la dernière zone
-    const zones = centres.map((c) => ({ ...c, rayon: diametreExterieur(cible) / 2 * calage.echelle + 1.5 * trouPx() }));
+    const zones = centres.map((c) => ({ ...c, rayon: diametreExterieur(cible) / 2 * calage.echelle + 0.5 * trouPx() }));
     // Trous ajoutés à la main, conservés
     const manuels = impacts.filter((i) => i.manuel);
     // Détection automatique
