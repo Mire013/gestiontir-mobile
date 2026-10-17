@@ -166,3 +166,6 @@ canvas.photo-loupe { position: fixed; z-index: 40; width: 160px; height: 160px; 
 .photo-zone { position: relative; overflow: hidden; border-radius: 10px; touch-action: none; background: #000; }
 .photo-zone[hidden], .photo-zoom[hidden] { display: none; }
 canvas.photo-canvas { transform-origin: 0 0; }
+.photo-outil button { flex: 1; padding: 8px 4px; }
+.photo-outil button.actif { background: var(--accent); border-color: var(--accent); color: var(--accent-texte); font-weight: 700; }
+.photo-outil[hidden] { display: none; }

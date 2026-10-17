@@ -385,7 +385,7 @@ export function ouvrirAnalysePhoto({ cible, trou, attendus = null, valider }) {
   // Visuels, rayon extérieur
   const nombreVisuels = centresVisuels(cible).length;
   // État
-  let etape = "choix", image = null, gris = null, points = [], calage = null, centres = [], impacts = [], sensibilite = 4, manuel = false, loupeActive = false, coups = attendus > 0 ? Math.round(attendus) : null;
+  let etape = "choix", image = null, gris = null, points = [], calage = null, centres = [], impacts = [], sensibilite = 4, manuel = false, loupeActive = false, coups = attendus > 0 ? Math.round(attendus) : null, outil = "ajouter";
 
   // ----- Éléments -----
   const racine = el("div", { class: "photo-ecran" });
@@ -394,6 +394,11 @@ export function ouvrirAnalysePhoto({ cible, trou, attendus = null, valider }) {
   // Zone qui montre une partie de la photo : zoom (pincement, boutons, molette) et déplacement à deux doigts
   const zone = el("div", { class: "photo-zone" }, canvas);
   let zoom = 1, tx = 0, ty = 0;
+  // Choix de l'action d'un toucher en revue : ajouter un trou, ou retirer un cercle (jamais les deux à la fois)
+  const boutonOutilAjouter = el("button", { onclick: () => { outil = "ajouter"; rafraichir(); } }, "➕ Ajouter un trou");
+  const boutonOutilRetirer = el("button", { onclick: () => { outil = "retirer"; rafraichir(); } }, "🗑 Retirer un cercle");
+  const barreOutil = el("div", { class: "barre-outils photo-outil" }, boutonOutilAjouter, boutonOutilRetirer);
+  barreOutil.hidden = true;
   const barreZoom = el("div", { class: "barre-outils photo-zoom" },
     el("button", { onclick: () => zoomerBouton(1 / 1.6) }, "−"), el("button", { onclick: () => zoomerBouton(1.6) }, "+"),
     el("button", { onclick: () => { zoom = 1; tx = 0; ty = 0; appliquerZoom(); rafraichir(); } }, "⤢ Photo entière"));
@@ -414,7 +419,7 @@ export function ouvrirAnalysePhoto({ cible, trou, attendus = null, valider }) {
   zoneCoups.hidden = true;  const fermer = () => { racine.remove(); loupe.remove(); };
   racine.append(
     el("div", { class: "photo-entete" }, el("strong", {}, "Analyse d'une photo de cible"), el("button", { onclick: fermer }, "Fermer")),
-    consigne, zone, barreZoom, actions, zoneCoups, reglage, resume);
+    consigne, barreOutil, zone, barreZoom, actions, zoneCoups, reglage, resume);
   document.body.append(racine, loupe);
 
   // ----- Choix de la photo -----
@@ -497,7 +502,7 @@ export function ouvrirAnalysePhoto({ cible, trou, attendus = null, valider }) {
       actions.replaceChildren(el("button", { onclick: () => { points = []; calage = null; manuel = false; etape = "points"; rafraichir(); } }, "Refaire"), el("button", { onclick: () => { points = []; calage = null; manuel = true; etape = "points"; rafraichir(); } }, "Calage manuel"), el("button", { class: "principal", onclick: detecter }, "Chercher les impacts"));
       resume.textContent = trouPx() < 5 ? "Attention : les trous font moins de 5 pixels sur la photo, rapprochez-vous pour une meilleure détection." : "";
     } else {
-      consigne.textContent = "Touchez un cercle pour le retirer, ou un trou manqué pour l'ajouter (la loupe aide à viser).";
+      consigne.textContent = outil === "ajouter" ? "Mode Ajouter : touchez un trou manqué (la loupe et son cercle jaune aident à viser). Pour supprimer un cercle, passez en mode Retirer." : "Mode Retirer : touchez un cercle pour le supprimer. Pour ajouter un trou, passez en mode Ajouter.";
       const n = impacts.length, douteux = impacts.filter((i) => i.douteux).length;
       actions.replaceChildren(
         el("button", { onclick: () => { points = []; calage = null; impacts = []; etape = "points"; rafraichir(); } }, "Refaire"),
@@ -506,6 +511,8 @@ export function ouvrirAnalysePhoto({ cible, trou, attendus = null, valider }) {
     }
     reglage.hidden = etape !== "revue";
     zoneCoups.hidden = etape !== "revue";
+    barreOutil.hidden = etape !== "revue";
+    boutonOutilAjouter.classList.toggle("actif", outil === "ajouter"); boutonOutilRetirer.classList.toggle("actif", outil === "retirer");
     if (etape === "revue") majCoups();
   };
 
@@ -552,6 +559,12 @@ export function ouvrirAnalysePhoto({ cible, trou, attendus = null, valider }) {
   // Ordre d'affichage et de saisie : par visuel, puis de haut en bas et de gauche à droite
   const ordonner = (liste) => [...liste].sort((a, b) => a.visuel - b.visuel || Math.round(a.y / 8) - Math.round(b.y / 8) || a.x - b.x);
 
+  // Cercle de trou le plus proche d'un point de la photo (dans un rayon d'environ un trou, en pixels d'écran constants si on zoome)
+  const cercleProche = (p) => {
+    const rayon = Math.max(trouPx() * 1.2, canvas.width / 60 / zoom);
+    return impacts.map((i) => ({ i, d: Math.hypot(enPixels(i).x - p.x, enPixels(i).y - p.y) })).filter((o) => o.d <= rayon).sort((a, b) => a.d - b.d)[0]?.i ?? null;
+  };
+
   // ----- Toucher, avec loupe -----
   const position = (ev) => {
     const r = canvas.getBoundingClientRect();
@@ -567,8 +580,20 @@ export function ouvrirAnalysePhoto({ cible, trou, attendus = null, valider }) {
     ctx.drawImage(image, p.x - Z, p.y - Z, 2 * Z, 2 * Z, 0, 0, 160, 160);
     ctx.strokeStyle = "#ff3b30"; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(80, 70); ctx.lineTo(80, 90); ctx.moveTo(70, 80); ctx.lineTo(90, 80); ctx.stroke();
-    // Cercle de la taille réelle d'un trou (diamètre du calibre) : à centrer sur le trou à ajouter
-    if (etape === "revue") { ctx.strokeStyle = "#ffd60a"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(80, 80, trouPx() / 2 * 160 / (2 * Z), 0, Math.PI * 2); ctx.stroke(); }
+    if (etape === "revue") {
+      // Cercles des trous déjà retenus (mêmes couleurs que sur la photo), pour voir ce qui est déjà pris
+      const echelleLoupe = 160 / (2 * Z), cible = outil === "retirer" ? cercleProche(p) : null;
+      for (const i of impacts) {
+        const q = enPixels(i), lx = (q.x - (p.x - Z)) * echelleLoupe, ly = (q.y - (p.y - Z)) * echelleLoupe;
+        if (lx < -40 || ly < -40 || lx > 200 || ly > 200) continue;
+        ctx.strokeStyle = i === cible ? "#ff3b30" : i.manuel ? "#2f80ff" : i.douteux ? "#ff9500" : "#34c759"; ctx.lineWidth = i === cible ? 4 : 2;
+        ctx.beginPath(); ctx.arc(lx, ly, trouPx() * 0.8 * echelleLoupe, 0, Math.PI * 2); ctx.stroke();
+      }
+      // Mode Ajouter : cercle jaune de la taille réelle d'un trou (diamètre du calibre), à centrer sur le trou à ajouter
+      if (outil === "ajouter") { ctx.strokeStyle = "#ffd60a"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(80, 80, trouPx() / 2 * echelleLoupe, 0, Math.PI * 2); ctx.stroke(); }
+      // Mode Retirer : le cercle qui serait supprimé est en rouge ; rien n'est supprimé s'il n'y en a pas
+      else if (!cible) { ctx.fillStyle = "rgba(255,59,48,.9)"; ctx.font = "bold 13px sans-serif"; ctx.textAlign = "center"; ctx.fillText("aucun cercle ici", 80, 150); }
+    }
     // Au-dessus du doigt, sans sortir de l'écran
     loupe.style.left = `${Math.min(window.innerWidth - 164, Math.max(4, ev.clientX - 80))}px`;
     loupe.style.top = `${Math.max(4, ev.clientY - 190)}px`;
@@ -655,16 +680,16 @@ export function ouvrirAnalysePhoto({ cible, trou, attendus = null, valider }) {
       }
       rafraichir();
     } else if (etape === "revue") {
-      // Retrait d'un impact proche, sinon ajout à la main
-      const rayon = Math.max(trouPx() * 1.2, canvas.width / 60 / zoom);
-      const proche = impacts.map((i) => ({ i, d: Math.hypot(enPixels(i).x - p.x, enPixels(i).y - p.y) })).filter((o) => o.d <= rayon).sort((a, b) => a.d - b.d)[0];
-      if (proche) impacts.splice(impacts.indexOf(proche.i), 1);
-      else {
-        // Visuel le plus proche
+      if (outil === "retirer") {
+        // Retrait du cercle le plus proche (dans un rayon d'environ un trou)
+        const proche = cercleProche(p);
+        if (proche) { impacts.splice(impacts.indexOf(proche), 1); rafraichir(); } else toast("Aucun cercle ici : rapprochez-vous d'un cercle.", 2500);
+      } else {
+        // Ajout à la main, même tout près d'un autre cercle
         const v = centres.reduce((m, c) => (Math.hypot(c.x - p.x, c.y - p.y) < Math.hypot(centres[m].x - p.x, centres[m].y - p.y) ? c.visuel : m), 0);
         impacts.push({ visuel: v, ...enMm(calage, centres[v], p), force: 1, douteux: false, manuel: true });
+        rafraichir();
       }
-      rafraichir();
     }
   });
 
