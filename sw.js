@@ -2,7 +2,7 @@
 // Aucune donnée personnelle ne passe par ici : seulement les fichiers de l'application.
 
 // Version du cache (à changer à chaque publication pour que les téléphones se mettent à jour)
-const VERSION = "gt-mobile-1.2.1";
+const VERSION = "gt-mobile-1.2.2";
 
 // Fichiers de l'application
 const FICHIERS = [
@@ -14,7 +14,7 @@ const FICHIERS = [
 
 // Installation : mise en cache de tous les fichiers
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FICHIERS)));
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FICHIERS.map((f) => new Request(f, { cache: "reload" })))).then(() => self.skipWaiting()));
 });
 
 // Activation : suppression des anciennes versions

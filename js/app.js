@@ -859,21 +859,21 @@ document.addEventListener("visibilitychange", () => {
 
 // Service worker : fonctionnement hors ligne et mises à jour (pas pendant les essais sur le PC, pour voir chaque modification)
 if ("serviceWorker" in navigator && location.hostname !== "localhost") {
+  // Première installation (pas de version précédente) : aucun rechargement à prévoir
+  let avaitUneVersion = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.register("sw.js").then((r) => {
-    // Nouvelle version installée : proposer de recharger
-    r.addEventListener("updatefound", () => {
-      const nouveau = r.installing;
-      nouveau?.addEventListener("statechange", () => {
-        if (nouveau.state === "installed" && navigator.serviceWorker.controller) {
-          const b = el("button", { class: "principal", onclick: () => { nouveau.postMessage("activer"); } }, "Mettre à jour");
-          document.getElementById("toasts").append(el("div", { class: "toast fixe" }, "Nouvelle version disponible. ", b));
-        }
-      });
-    });
+    // Recherche d'une nouvelle version à chaque lancement et à chaque retour dans l'application
+    r.update().catch(() => { /* hors ligne */ });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) r.update().catch(() => { /* hors ligne */ }); });
   });
-  // Nouvelle version active : rechargement
-  navigator.serviceWorker.addEventListener("controllerchange", () => location.reload());
+  // Une nouvelle version est active (elle s'active seule dès qu'elle est téléchargée)
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!avaitUneVersion) { avaitUneVersion = true; return; }
+    // Application verrouillée : rechargement immédiat ; ouverte : on laisse finir la saisie en cours
+    if (!etat) { location.reload(); return; }
+    const b = el("button", { class: "principal", onclick: () => location.reload() }, "Recharger");
+    document.getElementById("toasts").append(el("div", { class: "toast fixe" }, "Nouvelle version installée. ", b));
+  });
 }
-
 // Démarrage
 demarrer();
